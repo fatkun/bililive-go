@@ -14,8 +14,9 @@ add_latest_tag() {
   fi
 }
 
+#  --platform=linux/amd64,linux/386,linux/arm64/v8,linux/arm/v7,linux/arm/v6 \
 docker buildx build \
-  --platform=linux/amd64,linux/386,linux/arm64/v8,linux/arm/v7,linux/arm/v6 \
+  --platform=linux/amd64 \
   -t $IMAGE_TAG $(add_latest_tag) \
   --build-arg "tag=${VERSION}" \
   --progress plain \
