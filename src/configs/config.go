@@ -47,12 +47,14 @@ type VideoSplitStrategies struct {
 	OnRoomNameChanged bool          `yaml:"on_room_name_changed"`
 	OnSharpTime       bool          `yaml:"on_sharp_time"`
 	MaxDuration       time.Duration `yaml:"max_duration"`
+	MaxFileSize       int           `yaml:"max_file_size"`
 }
 
 // On record finished actions.
 type OnRecordFinished struct {
-	ConvertToMp4          bool `yaml:"convert_to_mp4"`
-	DeleteFlvAfterConvert bool `yaml:"delete_flv_after_convert"`
+	ConvertToMp4          bool   `yaml:"convert_to_mp4"`
+	DeleteFlvAfterConvert bool   `yaml:"delete_flv_after_convert"`
+	CustomCommandline     string `yaml:"custom_commandline"`
 }
 
 type Log struct {
@@ -86,6 +88,7 @@ type LiveRoom struct {
 	IsListening bool    `yaml:"is_listening"`
 	LiveId      live.ID `yaml:"-"`
 	Quality     int     `yaml:"quality"`
+	AudioOnly   bool    `yaml:"audio_only"`
 }
 
 type liveRoomAlias LiveRoom

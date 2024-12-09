@@ -2,17 +2,14 @@ package huya
 
 import (
 	"fmt"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
-
-	"github.com/hr3lxphr6j/requests"
 
 	"github.com/hr3lxphr6j/bililive-go/src/live"
 	"github.com/hr3lxphr6j/bililive-go/src/live/internal"
 	"github.com/hr3lxphr6j/bililive-go/src/pkg/utils"
+	"github.com/hr3lxphr6j/requests"
 )
 
 const (
@@ -34,17 +31,39 @@ func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
 
 type Live struct {
 	internal.BaseLive
+	getInfoMethodIndex        int
+	getStreamInfosMethodIndex int
+	LastCdnIndex              int
+}
+
+type GetInfoMethod func(l *Live, body string) (*live.Info, error)
+type GetStreamInfosMethod func(l *Live) ([]*live.StreamUrlInfo, error)
+
+var GetInfoMethodList = []GetInfoMethod{
+	GetInfo_ForXingXiu,
+	GetInfo_ForLol,
+}
+
+var GetStreamInfosMethodList = []GetStreamInfosMethod{
+	GetStreamInfos_ForXingXiu,
+	GetStreamInfos_ForLol,
+}
+
+func (l *Live) GetHtmlBody() (htmlBody string, err error) {
+	html, err := requests.Get(l.Url.String(), live.CommonUserAgent)
+	if err != nil {
+		return
+	}
+	if html.StatusCode != http.StatusOK {
+		err = fmt.Errorf("status code: %d", html.StatusCode)
+		return
+	}
+	htmlBody, err = html.Text()
+	return
 }
 
 func (l *Live) GetInfo() (info *live.Info, err error) {
-	resp, err := requests.Get(l.Url.String(), live.CommonUserAgent)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, live.ErrRoomNotExist
-	}
-	body, err := resp.Text()
+	body, err := l.GetHtmlBody()
 	if err != nil {
 		return nil, err
 	}
@@ -62,63 +81,43 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 		}, nil
 	}
 
-	var (
-		strFilter = utils.NewStringFilterChain(utils.ParseUnicode, utils.UnescapeHTMLEntity)
-		hostName  = strFilter.Do(utils.Match1(`"nick":"([^"]*)"`, body))
-		roomName  = strFilter.Do(utils.Match1(`"introduction":"([^"]*)"`, body))
-		status    = strFilter.Do(utils.Match1(`"isOn":([^,]*),`, body))
-	)
-
-	if hostName == "" || roomName == "" || status == "" {
-		return nil, live.ErrInternalError
+	getInfoMethodCount := len(GetInfoMethodList)
+	if getInfoMethodCount == 0 {
+		return nil, fmt.Errorf("no GetInfoMethod")
 	}
 
-	info = &live.Info{
-		Live:     l,
-		HostName: hostName,
-		RoomName: roomName,
-		Status:   status == "true",
+	if l.getInfoMethodIndex >= getInfoMethodCount {
+		l.getInfoMethodIndex = 0
 	}
-	return info, nil
+
+	info, err = GetInfoMethodList[l.getInfoMethodIndex](l, body)
+	l.getInfoMethodIndex++
+	return
 }
 
-func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
-	resp, err := requests.Get(l.Url.String(), live.CommonUserAgent)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, live.ErrRoomNotExist
-	}
-	body, err := resp.Text()
-	if err != nil {
-		return nil, err
+func (l *Live) GetStreamInfos() (infos []*live.StreamUrlInfo, err error) {
+	getStreamUrlsMethodCount := len(GetStreamInfosMethodList)
+	if getStreamUrlsMethodCount == 0 {
+		return nil, fmt.Errorf("no GetStreamUrlsMethod")
 	}
 
-	// Decode stream part.
-	streamStr := utils.Match1(`(?m)stream: (.*?)$`, body)
-
-	var (
-		sStreamName  = utils.Match1(`"sStreamName":"([^"]*)"`, streamStr)
-		sFlvUrl      = strings.ReplaceAll(utils.Match1(`"sFlvUrl":"([^"]*)"`, streamStr), `\/`, `/`)
-		sFlvAntiCode = utils.Match1(`"sFlvAntiCode":"([^"]*)"`, streamStr)
-		iLineIndex   = utils.Match1(`"iLineIndex":(\d*),`, streamStr)
-		uid          = (time.Now().Unix()%1e7*1e6 + int64(1e3*rand.Float64())) % 4294967295
-	)
-	u, err := url.Parse(fmt.Sprintf("%s/%s.flv", sFlvUrl, sStreamName))
-	if err != nil {
-		return nil, err
+	if l.getStreamInfosMethodIndex >= getStreamUrlsMethodCount {
+		l.getStreamInfosMethodIndex = 0
 	}
-	value := url.Values{}
-	value.Add("line", iLineIndex)
-	value.Add("p2p", "0")
-	value.Add("type", "web")
-	value.Add("ver", "1805071653")
-	value.Add("uid", fmt.Sprintf("%d", uid))
-	u.RawQuery = fmt.Sprintf("%s&%s", value.Encode(), utils.UnescapeHTMLEntity(sFlvAntiCode))
-	return []*url.URL{u}, nil
+
+	infos, err = GetStreamInfosMethodList[l.getStreamInfosMethodIndex](l)
+	l.getStreamInfosMethodIndex++
+	return
 }
 
 func (l *Live) GetPlatformCNName() string {
 	return cnName
+}
+
+func getGeneralHeadersForDownloader() map[string]string {
+	return map[string]string{
+		"Accept":          `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
+		"Accept-Encoding": `gzip, deflate`,
+		"Accept-Language": `zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3`,
+	}
 }

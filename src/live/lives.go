@@ -41,8 +41,9 @@ type InitializingFinishedParam struct {
 }
 
 type Options struct {
-	Cookies *cookiejar.Jar
-	Quality int
+	Cookies   *cookiejar.Jar
+	Quality   int
+	AudioOnly bool
 }
 
 func NewOptions(opts ...Option) (*Options, error) {
@@ -90,14 +91,31 @@ func WithQuality(quality int) Option {
 	}
 }
 
+func WithAudioOnly(audioOnly bool) Option {
+	return func(opts *Options) {
+		opts.AudioOnly = audioOnly
+	}
+}
+
 type ID string
+
+type StreamUrlInfo struct {
+	Url                  *url.URL
+	Name                 string
+	Description          string
+	Resolution           int
+	Vbitrate             int
+	HeadersForDownloader map[string]string
+}
 
 type Live interface {
 	SetLiveIdByString(string)
 	GetLiveId() ID
 	GetRawUrl() string
 	GetInfo() (*Info, error)
+	// Deprecated: GetStreamUrls is deprecated, using GetStreamInfos instead
 	GetStreamUrls() ([]*url.URL, error)
+	GetStreamInfos() ([]*StreamUrlInfo, error)
 	GetPlatformCNName() string
 	GetLastStartTime() time.Time
 	SetLastStartTime(time.Time)
@@ -118,6 +136,9 @@ func newWrappedLive(live Live, cache gcache.Cache) Live {
 func (w *WrappedLive) GetInfo() (*Info, error) {
 	i, err := w.Live.GetInfo()
 	if err != nil {
+		if info, err2 := w.cache.Get(w); err2 == nil {
+			info.(*Info).RoomName = err.Error()
+		}
 		return nil, err
 	}
 	if w.cache != nil {

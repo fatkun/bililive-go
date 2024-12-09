@@ -93,7 +93,7 @@ class FileList extends React.Component<Props, IState> {
     };
 
     onRowClick = (record: CurrentFolderFile) => {
-        let path = record.name;
+        let path = encodeURIComponent(record.name);
         if (this.props.match.params.path) {
             path = this.props.match.params.path + "/" + path;
         }
@@ -133,6 +133,22 @@ class FileList extends React.Component<Props, IState> {
                             } else {
                                 if (art) {
                                     art.notice.show = "不支持播放格式: flv";
+                                }
+                            }
+                        },
+                        ts: function (video, url) {
+                            if (mpegtsjs.isSupported()) {
+                                const tsPlayer = mpegtsjs.createPlayer({
+                                    type: "mpegts", // could also be mpegts, m2ts, flv,mse
+                                    url: url,
+                                    hasVideo: true,
+                                    hasAudio: true,
+                                }, {});
+                                tsPlayer.attachMediaElement(video);
+                                tsPlayer.load();
+                            } else {
+                                if (art) {
+                                    art.notice.show = "不支持播放格式: mpegts";
                                 }
                             }
                         },

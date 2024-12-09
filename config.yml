@@ -1,6 +1,6 @@
 rpc:
   enable: true
-  bind: 127.0.0.1:8080
+  bind: :8080
 debug: false
 interval: 20
 out_put_path: ./
@@ -21,12 +21,27 @@ live_rooms:
 - url: https://live.bilibili.com/22603245
   is_listening: true
   quality: 0 
-out_put_tmpl: ""
+# '{{ .Live.GetPlatformCNName }}/{{ .HostName | filenameFilter }}/[{{ now | date "2006-01-02 15-04-05"}}][{{ .HostName | filenameFilter }}][{{ .RoomName | filenameFilter }}].flv'
+# ./平台名称/主播名字/[时间戳][主播名字][房间名字].flv
+# https://github.com/hr3lxphr6j/bililive-go/wiki/More-Tips
+out_put_tmpl: ''
 video_split_strategies:
   on_room_name_changed: false
   max_duration: 0s
+  # 仅在 use_native_flv_parser=false 时生效
+  # 单位为字节 (byte)
+  # 有效值为正数，默认值 0 为无效
+  # 负数为非法值，程序会输出 log 提醒，并无视所设定的数值
+  max_file_size: 0
 cookies: {}
 on_record_finished:
   convert_to_mp4: false
   delete_flv_after_convert: false
+#  当 custom_commandline 的值 不为空时，convert_to_mp4 的值会被无视，
+#  而是在录制结束后直接执行 custom_commandline 中的命令。
+#  在 custom_commandline 执行结束后，程序还会继续查看 delete_flv_after_convert 的值，
+#  来判断是否需要删除原始 flv 文件。
+#  以下是一个在录制结束后将 flv 视频转换为同名 mp4 视频的示例：
+#  custom_commandline: '{{ .Ffmpeg }} -hide_banner -i "{{ .FileName }}" -c copy "{{ .FileName | trimSuffix (.FileName | ext)}}.mp4"'
+  custom_commandline: ""
 timeout_in_us: 60000000

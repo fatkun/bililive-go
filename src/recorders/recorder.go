@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,8 +104,17 @@ func NewRecorder(ctx context.Context, live live.Live) (Recorder, error) {
 }
 
 func (r *recorder) tryRecord(ctx context.Context) {
-	urls, err := r.Live.GetStreamUrls()
-	if err != nil || len(urls) == 0 {
+	var streamInfos []*live.StreamUrlInfo
+	var err error
+	if streamInfos, err = r.Live.GetStreamInfos(); err == live.ErrNotImplemented {
+		var urls []*url.URL
+		if urls, err = r.Live.GetStreamUrls(); err == live.ErrNotImplemented {
+			panic("GetStreamInfos and GetStreamUrls are not implemented for " + r.Live.GetPlatformCNName())
+		} else if err == nil {
+			streamInfos = utils.GenUrlInfos(urls, make(map[string]string))
+		}
+	}
+	if err != nil || len(streamInfos) == 0 {
 		r.getLogger().WithError(err).Warn("failed to get stream url, will retry after 5s...")
 		time.Sleep(5 * time.Second)
 		return
@@ -127,7 +137,8 @@ func (r *recorder) tryRecord(ctx context.Context) {
 	}
 	fileName := filepath.Join(r.OutPutPath, buf.String())
 	outputPath, _ := filepath.Split(fileName)
-	url := urls[0]
+	streamInfo := streamInfos[0]
+	url := streamInfo.Url
 
 	if strings.Contains(url.Path, "m3u8") {
 		fileName = fileName[:len(fileName)-4] + ".ts"
@@ -155,15 +166,66 @@ func (r *recorder) tryRecord(ctx context.Context) {
 	r.setAndCloseParser(p)
 	r.startTime = time.Now()
 	r.getLogger().Debugln("Start ParseLiveStream(" + url.String() + ", " + fileName + ")")
-	r.getLogger().Println(r.parser.ParseLiveStream(ctx, url, r.Live, fileName))
+	r.getLogger().Println(r.parser.ParseLiveStream(ctx, streamInfo, r.Live, fileName))
 	r.getLogger().Debugln("End ParseLiveStream(" + url.String() + ", " + fileName + ")")
 	removeEmptyFile(fileName)
-	if r.config.OnRecordFinished.ConvertToMp4 {
-		ffmpegPath, err := utils.GetFFmpegPath(ctx)
+	ffmpegPath, err := utils.GetFFmpegPath(ctx)
+	if err != nil {
+		r.getLogger().WithError(err).Error("failed to find ffmpeg")
+		return
+	}
+	cmdStr := strings.Trim(r.config.OnRecordFinished.CustomCommandline, "")
+	if len(cmdStr) > 0 {
+		tmpl, err := template.New("custom_commandline").Funcs(utils.GetFuncMap(r.config)).Parse(cmdStr)
 		if err != nil {
-			r.getLogger().WithError(err).Error("failed to find ffmpeg")
+			r.getLogger().WithError(err).Error("custom commandline parse failure")
 			return
 		}
+
+		obj, _ := r.cache.Get(r.Live)
+		info := obj.(*live.Info)
+
+		buf := new(bytes.Buffer)
+		if err := tmpl.Execute(buf, struct {
+			*live.Info
+			FileName string
+			Ffmpeg   string
+		}{
+			Info:     info,
+			FileName: fileName,
+			Ffmpeg:   ffmpegPath,
+		}); err != nil {
+			r.getLogger().WithError(err).Errorln("failed to render custom commandline")
+			return
+		}
+		bash := ""
+		args := []string{}
+		switch runtime.GOOS {
+		case "linux":
+			bash = "sh"
+			args = []string{"-c"}
+		case "windows":
+			bash = "cmd"
+			args = []string{"/C"}
+		default:
+			r.getLogger().Warnln("Unsupport system ", runtime.GOOS)
+		}
+		args = append(args, buf.String())
+		r.getLogger().Debugf("start executing custom_commandline: %s", args[1])
+		cmd := exec.Command(bash, args...)
+		if r.config.Debug {
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+		}
+		if err = cmd.Run(); err != nil {
+			r.getLogger().WithError(err).Debugf("custom commandline execute failure (%s %s)\n", bash, strings.Join(args, " "))
+		} else if r.config.OnRecordFinished.DeleteFlvAfterConvert {
+			os.Remove(fileName)
+		}
+		r.getLogger().Debugf("end executing custom_commandline: %s", args[1])
+	} else if r.config.OnRecordFinished.ConvertToMp4 {
+		//格式转换时去除原本后缀名
+		newFileName := fileName[0:strings.LastIndex(fileName, ".")]
 		convertCmd := exec.Command(
 			ffmpegPath,
 			"-hide_banner",
@@ -171,7 +233,7 @@ func (r *recorder) tryRecord(ctx context.Context) {
 			fileName,
 			"-c",
 			"copy",
-			fileName+".mp4",
+			newFileName+".mp4",
 		)
 		if err = convertCmd.Run(); err != nil {
 			convertCmd.Process.Kill()
@@ -203,7 +265,9 @@ func (r *recorder) setAndCloseParser(p parser.Parser) {
 	r.parserLock.Lock()
 	defer r.parserLock.Unlock()
 	if r.parser != nil {
-		r.parser.Stop()
+		if err := r.parser.Stop(); err != nil {
+			r.getLogger().WithError(err).Warn("failed to end recorder")
+		}
 	}
 	r.parser = p
 }
@@ -229,7 +293,9 @@ func (r *recorder) Close() {
 	}
 	close(r.stop)
 	if p := r.getParser(); p != nil {
-		p.Stop()
+		if err := p.Stop(); err != nil {
+			r.getLogger().WithError(err).Warn("failed to end recorder")
+		}
 	}
 	r.getLogger().Info("Record End")
 	r.ed.DispatchEvent(events.NewEvent(RecorderStop, r.Live))

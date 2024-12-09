@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -73,13 +72,18 @@ type Parser struct {
 	closeOnce *sync.Once
 }
 
-func (p *Parser) ParseLiveStream(ctx context.Context, url *url.URL, live live.Live, file string) error {
+func (p *Parser) ParseLiveStream(ctx context.Context, streamUrlInfo *live.StreamUrlInfo, live live.Live, file string) error {
+	url := streamUrlInfo.Url
 	// init input
 	req, err := http.NewRequest("GET", url.String(), nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Add("User-Agent", "Chrome/59.0.3071.115")
+	// add headers for downloader from live
+	for k, v := range streamUrlInfo.HeadersForDownloader {
+		req.Header.Set(k, v)
+	}
 	resp, err := p.hc.Do(req)
 	if err != nil {
 		return err
